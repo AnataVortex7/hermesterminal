@@ -1,13 +1,11 @@
 """
 Keep-alive + Health check server.
-Port 8080 वर internally run होतो.
-Websockify चा PORT वेगळा असतो (10000) - conflict नाही.
+Port 9000 वर internally run होतो.
 """
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import os
 
-# Internal port - websockify च्या PORT शी conflict नाही
-PORT = 8080
+PORT = 9000
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -20,7 +18,6 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    # Logs बंद - noise नको
     def log_message(self, format, *args):
         pass
 
