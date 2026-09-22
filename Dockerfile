@@ -2,8 +2,6 @@ FROM python:3.10-slim
 
 RUN apt-get update && apt-get install -y \
     openssh-server \
-    nginx \
-    socat \
     curl \
     bash \
     git \
@@ -23,10 +21,11 @@ RUN mkdir -p /var/run/sshd && \
     echo "ClientAliveCountMax 10" >> /etc/ssh/sshd_config
 
 WORKDIR /app
-COPY nginx.conf /etc/nginx/nginx.conf
 COPY start.sh /app/start.sh
-COPY keep_alive.py /app/keep_alive.py
 RUN chmod +x /app/start.sh
+
+# Render default port
+ENV PORT=10000
 
 EXPOSE 10000
 
