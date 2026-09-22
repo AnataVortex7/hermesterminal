@@ -1,32 +1,30 @@
-FROM python:3.10-slim
+"""
+Keep-alive + Health check server.
+Port 8080 वर internally run होतो.
+Websockify चा PORT वेगळा असतो (10000) - conflict नाही.
+"""
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
 
-RUN apt-get update && apt-get install -y \
-    openssh-server \
-    nginx \
-    curl \
-    bash \
-    git \
-    nodejs \
-    npm \
-    && rm -rf /var/lib/apt/lists/*
+# Internal port - websockify च्या PORT शी conflict नाही
+PORT = 8080
 
-# SSH setup
-RUN mkdir -p /var/run/sshd && \
-    sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
-    sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
-    sed -i 's/UsePAM yes/UsePAM no/' /etc/ssh/sshd_config && \
-    echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config && \
-    echo "AuthorizedKeysFile .ssh/authorized_keys" >> /etc/ssh/sshd_config && \
-    echo "ClientAliveInterval 60" >> /etc/ssh/sshd_config && \
-    echo "ClientAliveCountMax 10" >> /etc/ssh/sshd_config
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok")
+        else:
+            self.send_response(404)
+            self.end_headers()
 
-WORKDIR /app
-COPY nginx.conf /etc/nginx/nginx.conf
-COPY start.sh /app/start.sh
-COPY keep_alive.py /app/keep_alive.py
-RUN chmod +x /app/start.sh
+    # Logs बंद - noise नको
+    def log_message(self, format, *args):
+        pass
 
-EXPOSE 10000
-
-CMD ["/app/start.sh"]
+if __name__ == "__main__":
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    print(f">> Health server on port {PORT}")
+    server.serve_forever()
