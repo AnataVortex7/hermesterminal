@@ -2,12 +2,9 @@ FROM python:3.10-slim
 
 RUN apt-get update && apt-get install -y \
     openssh-server \
-    socat \
     curl \
     bash \
     git \
-    nodejs \
-    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # SSH setup
@@ -26,8 +23,6 @@ COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 ENV PORT=10000
-ENV SSH_PROXY_PORT=2222
-
 EXPOSE 10000
 
 CMD ["/app/start.sh"]
