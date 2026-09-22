@@ -4,11 +4,12 @@ set -e
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 export TZ="Asia/Kolkata"
 
-# Render PORT env var - हाच एकमेव public port
+# Render PORT - HTTP साठी
 PORT="${PORT:-10000}"
+# SSH internal port - वेगळा
+SSH_PROXY_PORT=2222
 
 echo "=== [Tool Runner Startup] ==="
-echo "    Single public port: $PORT"
 
 # 1. SSH Public Key setup
 if [ -n "$SSH_PUBLIC_KEY" ]; then
@@ -23,128 +24,76 @@ else
 fi
 
 # 2. SSH server - internal port 22
-echo ">> Starting SSH server on internal port 22..."
-service ssh start || /usr/sbin/sshd
-echo ">> SSH running."
+echo ">> Starting SSH server..."
+/usr/sbin/sshd
+echo ">> SSH running on port 22."
 
-# 3. Single-port router - Python script
+# 3. HTTP server - Render ला हे दिसते
 #    /health → 200 ok  (Render health check)
-#    बाकी सगळं → SSH port 22 ला forward
-cat <<'PYEOF' > /tmp/port_router.py
+#    /ssh-info → SSH proxy port info
+cat << 'PYEOF' > /tmp/http_server.py
 """
-Single port router:
-- HTTP GET /health → 200 ok (Render health check, no load)
-- बाकी सगळे connections → SSH port 22 forward
+HTTP server - Render ला हे दिसते
+Port: PORT env var (10000)
 
-Render ला एकच port दिसतो - PORT env var
+Routes:
+  GET /health    → 200 ok  (Render health check, zero load)
+  GET /          → 200 (generic)
+  बाकी           → 404
 """
-import socket
-import threading
-import os
-import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import os, sys
 
 PORT = int(os.environ.get("PORT", 10000))
-SSH_PORT = 22
-HEALTH_RESPONSE = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+SSH_PROXY_PORT = int(os.environ.get("SSH_PROXY_PORT", 2222))
 
-def is_http_health(data):
-    """HTTP GET /health request check"""
-    try:
-        return data.startswith(b"GET /health") or data.startswith(b"GET / ")
-    except:
-        return False
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ("/health", "/"):
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
 
-def forward(src, dst):
-    """Data forward between two sockets"""
-    try:
-        while True:
-            data = src.recv(4096)
-            if not data:
-                break
-            dst.sendall(data)
-    except:
-        pass
-    finally:
-        try: src.close()
-        except: pass
-        try: dst.close()
-        except: pass
-
-def handle_client(client_sock, client_addr):
-    try:
-        # पहिले data peek करा - HTTP की SSH?
-        client_sock.settimeout(5)
-        try:
-            first_data = client_sock.recv(1024, socket.MSG_PEEK)
-        except:
-            client_sock.close()
-            return
-        client_sock.settimeout(None)
-
-        if is_http_health(first_data):
-            # HTTP /health request - simple 200 response
-            client_sock.recv(1024)  # buffer clear
-            client_sock.sendall(HEALTH_RESPONSE)
-            client_sock.close()
-            return
-
-        # SSH connection - port 22 ला forward
-        ssh_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        ssh_sock.connect(("127.0.0.1", SSH_PORT))
-
-        # Bidirectional forward - दोन threads
-        t1 = threading.Thread(target=forward, args=(client_sock, ssh_sock), daemon=True)
-        t2 = threading.Thread(target=forward, args=(ssh_sock, client_sock), daemon=True)
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
-
-    except Exception as e:
-        try: client_sock.close()
-        except: pass
-
-def main():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(("0.0.0.0", PORT))
-    server.listen(100)
-    print(f">> Port router listening on {PORT}", flush=True)
-    print(f"   /health → 200 ok", flush=True)
-    print(f"   SSH     → 127.0.0.1:22", flush=True)
-
-    while True:
-        try:
-            client_sock, client_addr = server.accept()
-            t = threading.Thread(
-                target=handle_client,
-                args=(client_sock, client_addr),
-                daemon=True
-            )
-            t.start()
-        except Exception as e:
-            print(f"!! Accept error: {e}", flush=True)
+    def log_message(self, format, *args):
+        pass  # Logs बंद - noise नको
 
 if __name__ == "__main__":
-    main()
+    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    print(f">> HTTP server on port {PORT}", flush=True)
+    print(f"   /health → 200 ok", flush=True)
+    server.serve_forever()
 PYEOF
 
-echo ">> Starting single-port router on port $PORT..."
-python3 /tmp/port_router.py &
-ROUTER_PID=$!
+echo ">> Starting HTTP server on port $PORT (Render health check)..."
+python3 /tmp/http_server.py &
+HTTP_PID=$!
+
+# 4. SSH proxy - वेगळ्या port वर (Render internal network)
+#    Server 1 हा port use करतो SSH connect साठी
+echo ">> Starting SSH proxy on internal port $SSH_PROXY_PORT..."
+socat TCP-LISTEN:${SSH_PROXY_PORT},fork,reuseaddr TCP:127.0.0.1:22 &
+SOCAT_PID=$!
 
 echo "=== Tool Runner Ready ==="
-echo "    Public port $PORT:"
-echo "    - GET /health → 200 ok"
-echo "    - SSH connections → port 22"
+echo "    HTTP (Render public): port $PORT"
+echo "    SSH proxy (internal): port $SSH_PROXY_PORT → 22"
+echo "    Health: https://your-service.onrender.com/health"
 
 # Graceful shutdown
 cleanup() {
     echo ">> Shutting down..."
-    kill $ROUTER_PID 2>/dev/null || true
-    service ssh stop 2>/dev/null || true
+    kill $HTTP_PID 2>/dev/null || true
+    kill $SOCAT_PID 2>/dev/null || true
+    /usr/sbin/sshd -T 2>/dev/null || true
+    pkill sshd 2>/dev/null || true
     exit 0
 }
 trap cleanup SIGTERM SIGINT
 
-wait $ROUTER_PID
+wait $HTTP_PID
