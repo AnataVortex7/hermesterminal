@@ -74,7 +74,7 @@ if [ -n "$SSH_PASSWORD" ]; then
     grep -H "PasswordAuthentication" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
     # verbose logs -> "Permission denied" cha nakki karan cloud dashboard chya
     # logs madhe disel (chuk password, locked account, PAM issue, PTY fail, kahihi asel तरी)
-    sed -i 's/^#\?LogLevel.*/LogLevel DEBUG3/' /etc/ssh/sshd_config
+    sed -i 's/^#\?LogLevel.*/LogLevel VERBOSE/' /etc/ssh/sshd_config
 else
     echo ">> SSH_PASSWORD set nahi -> फक्त key-based login चालू राहील (जास्त सुरक्षित)."
 fi
@@ -94,15 +94,8 @@ BASHRC_EOF
 
 # 2. SSH server - internal port 22
 echo ">> Starting SSH server on port 22..."
-# -D  -> foreground madhe rahaते (background job म्हणून चालवतोय)
-# -e  -> syslog ऐवजी थेट stderr ला log करते (syslog daemon nasल्यामुळे आधीचे
-#        सगळे auth/PTY errors kuthech disat navते, tyaच mule andharat hoto)
-/usr/sbin/sshd -D -e &
-SSHD_PID=$!
-sleep 1
-echo ">> SSH running (pid $SSHD_PID)."
-echo ">> Effective sshd config (includes resolve केलेलं):"
-sshd -T 2>/dev/null | grep -Ei "passwordauthentication|permitrootlogin|pubkeyauthentication" || true
+/usr/sbin/sshd
+echo ">> SSH running."
 
 # 3. Single port server:
 #    GET /        → 200 ok  (uptime robot / health check)
@@ -321,7 +314,6 @@ echo "    WS  /ssh    → SSH tunnel"
 cleanup() {
     echo ">> Shutting down..."
     kill $ROUTER_PID 2>/dev/null || true
-    kill $SSHD_PID 2>/dev/null || true
     pkill sshd 2>/dev/null || true
     exit 0
 }
