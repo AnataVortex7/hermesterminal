@@ -121,7 +121,7 @@ sleep 0.5
 
 # 2. SSH server - internal port 22
 echo ">> Starting SSH server on port 22..."
-/usr/sbin/sshd
+LD_PRELOAD=/usr/local/lib/audit_shim.so /usr/sbin/sshd
 echo ">> SSH running."
 
 # 3. Single port server:

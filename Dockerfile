@@ -7,8 +7,13 @@ RUN apt-get update && apt-get install -y \
     git \
     tmux \
     ca-certificates \
+    build-essential \
     && curl -fsSL https://tailscale.com/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
+
+# Compile audit shim library to prevent "linux_audit_write_entry failed: Operation not permitted"
+COPY audit_shim.c /app/audit_shim.c
+RUN gcc -shared -fPIC -ldl /app/audit_shim.c -o /usr/local/lib/audit_shim.so
 
 # SSH setup
 RUN mkdir -p /var/run/sshd && \
