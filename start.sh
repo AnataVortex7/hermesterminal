@@ -65,9 +65,16 @@ fi
 #     Key hi lambच rahते (ती crypto ने banते, custom shortcut nasतो),
 #     पण key ऐवजी/सोबत साधा password वापरायचा असेल तर हा env var सेट करा.
 if [ -n "$SSH_PASSWORD" ]; then
-    echo ">> SSH_PASSWORD set -> password login pan enable karत आहोत (key + password donhi chalतील)."
+    echo ">> SSH_PASSWORD set (length=${#SSH_PASSWORD}) -> password login pan enable karत आहोत (key + password donhi chalतील)."
     echo "root:$SSH_PASSWORD" | chpasswd
+    passwd -S root || true
     sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    # Debian chya navya sshd_config madhe Include line sarvat varती astे,
+    # tyat konti conf.d file ne "no" override kelं nasel he confirm karayla:
+    grep -H "PasswordAuthentication" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
+    # verbose logs -> "Permission denied" cha nakki karan cloud dashboard chya
+    # logs madhe disel (chuk password, locked account, PAM issue, kahihi asel तरी)
+    sed -i 's/^#\?LogLevel.*/LogLevel VERBOSE/' /etc/ssh/sshd_config
 else
     echo ">> SSH_PASSWORD set nahi -> फक्त key-based login चालू राहील (जास्त सुरक्षित)."
 fi
@@ -87,6 +94,8 @@ BASHRC_EOF
 echo ">> Starting SSH server on port 22..."
 /usr/sbin/sshd
 echo ">> SSH running."
+echo ">> Effective sshd config (includes resolve केलेलं):"
+sshd -T 2>/dev/null | grep -Ei "passwordauthentication|permitrootlogin|pubkeyauthentication" || true
 
 # 3. Single port server:
 #    GET /        → 200 ok  (uptime robot / health check)
