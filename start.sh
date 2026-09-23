@@ -8,17 +8,80 @@ PORT="${PORT:-10000}"
 
 echo "=== [Tool Runner Startup] ==="
 
-# 1. SSH Public Key setup
-if [ -n "$SSH_PUBLIC_KEY" ]; then
-    echo ">> Installing SSH public key..."
-    mkdir -p /root/.ssh
-    echo "$SSH_PUBLIC_KEY" > /root/.ssh/authorized_keys
-    chmod 700 /root/.ssh
-    chmod 600 /root/.ssh/authorized_keys
-    echo ">> SSH key ready."
+# 0. Tailscale (optional but recommended) - ek TAILSCALE_AUTHKEY ने ha container
+#    tumchya tailnet madhe join hoto. Mag PC ani phone (Tailscale app madhe
+#    tyach account ने login) थेट ह्या container च्या tailscale IP वर SSH करू
+#    शकतात - koणतीही public key copy-paste karaychi गरज nahi, ani connection
+#    public internet var expose pan hot nahi (jast secure).
+if [ -n "$TAILSCALE_AUTHKEY" ]; then
+    echo ">> Tailscale join karत आहोत..."
+    mkdir -p /var/run/tailscale /var/lib/tailscale
+    # Bahutek free/PaaS cloud vars (Render, Railway, etc.) NET_ADMIN / /dev/net/tun
+    # देत nahit, म्हणून userspace-networking mode default ठेवली (root/tun शिवाय चालते).
+    tailscaled --state=/var/lib/tailscale/tailscaled.state \
+        --tun=userspace-networking \
+        --socks5-server=localhost:1055 > /var/log/tailscaled.log 2>&1 &
+    sleep 2
+    tailscale up \
+        --authkey="$TAILSCALE_AUTHKEY" \
+        --hostname="${TAILSCALE_HOSTNAME:-hermes-cloud}" \
+        --accept-routes=false \
+        --ssh=false || echo "!! Tailscale up fail झालं, log पहा: /var/log/tailscaled.log"
+    TS_IP=$(tailscale ip -4 2>/dev/null || echo "??")
+    echo ">> Tailscale IP: $TS_IP   (PC/Termux वरून: ssh root@$TS_IP)"
 else
-    echo "!! WARNING: SSH_PUBLIC_KEY not set!"
+    echo ">> TAILSCALE_AUTHKEY set nahi -> फक्त websocket/SSH-key pathane connect करता येईल."
 fi
+
+# 1. SSH Public Key setup
+# SSH_PUBLIC_KEY      -> normal PC/browser client chi key
+# TERMUX_PUBLIC_KEY   -> Termux (phone / another cloud) varun generate keleli key
+# donhi asतील tar donhi authorized_keys madhe jातात, kontihi ek client connect karu shakते.
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+: > /root/.ssh/authorized_keys
+
+KEY_COUNT=0
+if [ -n "$SSH_PUBLIC_KEY" ]; then
+    echo ">> Installing SSH_PUBLIC_KEY (PC/browser client)..."
+    echo "$SSH_PUBLIC_KEY" >> /root/.ssh/authorized_keys
+    KEY_COUNT=$((KEY_COUNT+1))
+fi
+
+if [ -n "$TERMUX_PUBLIC_KEY" ]; then
+    echo ">> Installing TERMUX_PUBLIC_KEY (Termux client)..."
+    echo "$TERMUX_PUBLIC_KEY" >> /root/.ssh/authorized_keys
+    KEY_COUNT=$((KEY_COUNT+1))
+fi
+
+if [ "$KEY_COUNT" -gt 0 ]; then
+    chmod 600 /root/.ssh/authorized_keys
+    echo ">> $KEY_COUNT SSH key(s) ready."
+else
+    echo "!! WARNING: SSH_PUBLIC_KEY / TERMUX_PUBLIC_KEY konतीच set nahi!"
+fi
+
+# 1b. Optional SIMPLE password login (उदा. SSH_PASSWORD="Akshaymeratpatil@1181")
+#     Key hi lambच rahते (ती crypto ने banते, custom shortcut nasतो),
+#     पण key ऐवजी/सोबत साधा password वापरायचा असेल तर हा env var सेट करा.
+if [ -n "$SSH_PASSWORD" ]; then
+    echo ">> SSH_PASSWORD set -> password login pan enable karत आहोत (key + password donhi chalतील)."
+    echo "root:$SSH_PASSWORD" | chpasswd
+    sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+else
+    echo ">> SSH_PASSWORD set nahi -> फक्त key-based login चालू राहील (जास्त सुरक्षित)."
+fi
+
+# 1c. Persistent session: SSH disconnect zala tarihi चालू असलेलं command
+#     चालूच rahते. Login shell madhe automatic tmux session attach/create
+#     hote ("hermes" name ने). परत connect केलं की तीच session परत dिसते.
+cat >> /root/.bashrc << 'BASHRC_EOF'
+
+# Hermes Terminal: auto-attach persistent tmux session
+if command -v tmux >/dev/null 2>&1 && [ -z "$TMUX" ] && [ -n "$SSH_CONNECTION" ]; then
+    tmux attach -t hermes 2>/dev/null || tmux new -s hermes
+fi
+BASHRC_EOF
 
 # 2. SSH server - internal port 22
 echo ">> Starting SSH server on port 22..."
@@ -70,21 +133,29 @@ def forward(src, dst):
         try: dst.close()
         except: pass
 
-def ws_forward(client_sock):
+def ws_forward(client_sock, client_rfile):
     """WebSocket framing unwrap → SSH forward"""
     ssh_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ssh_sock.connect((SSH_HOST, SSH_PORT))
+
+    def recv_exact(n):
+        # client_rfile वरून वाचतो (buffered) -> handshake parsing वेळी
+        # आधीच socket buffer मधे आलेला पहिला frame कधीच हरवत नाही.
+        data = b""
+        while len(data) < n:
+            chunk = client_rfile.read(n - len(data))
+            if not chunk:
+                return None
+            data += chunk
+        return data
 
     def ws_to_ssh():
         try:
             while True:
                 # WebSocket frame header
-                header = b""
-                while len(header) < 2:
-                    chunk = client_sock.recv(2 - len(header))
-                    if not chunk:
-                        return
-                    header += chunk
+                header = recv_exact(2)
+                if header is None:
+                    return
 
                 fin = (header[0] & 0x80) != 0
                 opcode = header[0] & 0x0f
@@ -95,22 +166,27 @@ def ws_forward(client_sock):
                     return
 
                 if payload_len == 126:
-                    ext = client_sock.recv(2)
+                    ext = recv_exact(2)
+                    if ext is None:
+                        return
                     payload_len = struct.unpack(">H", ext)[0]
                 elif payload_len == 127:
-                    ext = client_sock.recv(8)
+                    ext = recv_exact(8)
+                    if ext is None:
+                        return
                     payload_len = struct.unpack(">Q", ext)[0]
 
                 mask_key = b""
                 if masked:
-                    mask_key = client_sock.recv(4)
+                    mask_key = recv_exact(4)
+                    if mask_key is None:
+                        return
 
                 payload = b""
-                while len(payload) < payload_len:
-                    chunk = client_sock.recv(payload_len - len(payload))
-                    if not chunk:
+                if payload_len:
+                    payload = recv_exact(payload_len)
+                    if payload is None:
                         return
-                    payload += chunk
 
                 if masked:
                     payload = bytes(
@@ -187,8 +263,8 @@ class Router(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.flush()
 
-        # Raw socket वर SSH forward
-        ws_forward(self.connection)
+        # Raw socket वर SSH forward (rfile सुद्धा pass -> buffered bytes lost होत नाहीत)
+        ws_forward(self.connection, self.rfile)
 
     def log_message(self, *args):
         pass
