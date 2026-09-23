@@ -92,6 +92,33 @@ if command -v tmux >/dev/null 2>&1 && [ -z "$TMUX" ] && [ -n "$SSH_CONNECTION" ]
 fi
 BASHRC_EOF
 
+# 1d. Lightweight syslog receiver: sshd आपले auth/session logs normally
+#     syslog() ने पाठवतो (हे connection च्या fd shi kahihi संबंध नसतो,
+#     त्यामुळे आधीच्या -e सारखं काहीही corrupt होत नाही). Syslog daemon
+#     nasल्यामुळे te harवायचे, आता ek साधा /dev/log receiver ठेवतो.
+mkdir -p /var/log
+rm -f /dev/log
+python3 - << 'SYSLOG_EOF' &
+import socket, os
+sock_path = "/dev/log"
+try:
+    os.unlink(sock_path)
+except FileNotFoundError:
+    pass
+s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+s.bind(sock_path)
+os.chmod(sock_path, 0o666)
+while True:
+    data, _ = s.recvfrom(8192)
+    try:
+        msg = data.decode(errors="replace").strip()
+    except Exception:
+        msg = repr(data)
+    print(f"[sshd-syslog] {msg}", flush=True)
+SYSLOG_EOF
+SYSLOG_PID=$!
+sleep 0.5
+
 # 2. SSH server - internal port 22
 echo ">> Starting SSH server on port 22..."
 /usr/sbin/sshd
@@ -314,6 +341,7 @@ echo "    WS  /ssh    → SSH tunnel"
 cleanup() {
     echo ">> Shutting down..."
     kill $ROUTER_PID 2>/dev/null || true
+    kill $SYSLOG_PID 2>/dev/null || true
     pkill sshd 2>/dev/null || true
     exit 0
 }
