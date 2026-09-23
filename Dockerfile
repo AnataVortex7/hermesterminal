@@ -5,6 +5,9 @@ RUN apt-get update && apt-get install -y \
     curl \
     bash \
     git \
+    tmux \
+    ca-certificates \
+    && curl -fsSL https://tailscale.com/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
 # SSH setup
