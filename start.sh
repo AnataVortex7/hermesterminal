@@ -82,15 +82,7 @@ fi
 # 1c. Persistent session: SSH disconnect zala tarihi चालू असलेलं command
 #     चालूच rahते. Login shell madhe automatic tmux session attach/create
 #     hote ("hermes" name ने). परत connect केलं की तीच session परत dिसते.
-cat >> /root/.bashrc << 'BASHRC_EOF'
 
-# Hermes Terminal: auto-attach persistent tmux session
-# (-t 0 check -> khara PTY asel tarach tmux try karto, nahitar
-#  "open terminal failed" error yeto - te tya check ने टळते)
-if command -v tmux >/dev/null 2>&1 && [ -z "$TMUX" ] && [ -n "$SSH_CONNECTION" ] && [ -t 0 ]; then
-    tmux attach -t hermes 2>/dev/null || tmux new -s hermes
-fi
-BASHRC_EOF
 
 # 1d. Lightweight syslog receiver: sshd आपले auth/session logs normally
 #     syslog() ने पाठवतो (हे connection च्या fd shi kahihi संबंध नसतो,
