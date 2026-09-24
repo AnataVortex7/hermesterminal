@@ -128,7 +128,7 @@ sleep 0.5
 # 2. SSH server - internal port 22
 echo ">> Starting SSH server on port 22..."
 # LD_PRELOAD -> Linux audit-write shim (Operation not permitted crash fix)
-LD_PRELOAD=/usr/local/lib/audit_shim.so /usr/sbin/sshd
+LD_PRELOAD=/usr/local/lib/audit_shim.so /usr/sbin/sshd -d -e
 echo ">> SSH running."
 
 # 3. Single port server:
