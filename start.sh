@@ -349,8 +349,8 @@ PYEOF
 
 
 # Start ttyd browser terminal on port 7681 with password authentication
-ttyd -p 7681 -c root:${SSH_PASSWORD:-Akshaypatil@1181} bash &
-nginx -c /app/nginx.conf &
+ttyd -p 10000 -c root:${SSH_PASSWORD:-Akshaypatil@1181} bash &
+
 ROUTER_PID=$!
 
 echo "=== Tool Runner Ready ==="
