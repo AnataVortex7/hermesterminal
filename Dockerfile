@@ -34,7 +34,9 @@ RUN curl -sL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
 
 WORKDIR /app
 COPY nginx.conf /etc/nginx/nginx.conf
+COPY terminal_entry.sh /app/terminal_entry.sh
 COPY start.sh /app/start.sh
+RUN chmod +x /app/terminal_entry.sh
 RUN chmod +x /app/start.sh
 
 ENV PORT=10000
