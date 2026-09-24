@@ -29,8 +29,8 @@ RUN mkdir -p /var/run/sshd && \
     echo "ClientAliveCountMax 10" >> /etc/ssh/sshd_config
 
 
-# Install ttyd for web-based browser terminal
-RUN curl -sL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd && chmod +x /usr/local/bin/ttyd
+# Install gotty for web-based browser terminal
+RUN curl -sL https://github.com/tsl0922/gotty/releases/download/1.7.7/gotty.x86_64 -o /usr/local/bin/gotty && chmod +x /usr/local/bin/gotty
 
 WORKDIR /app
 COPY nginx.conf /etc/nginx/nginx.conf
