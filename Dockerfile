@@ -32,6 +32,7 @@ RUN mkdir -p /var/run/sshd && \
 RUN curl -sLL https://github.com/tsl0922/gotty/releases/download/1.7.7/gotty.x86_64 -o /usr/local/bin/gotty && chmod +x /usr/local/bin/gotty
 
 WORKDIR /app
+COPY server.py /app/server.py
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
