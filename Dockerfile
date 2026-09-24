@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     bash \
     git \
     tmux \
+    nginx \
     ca-certificates \
     build-essential \
     && curl -fsSL https://tailscale.com/install.sh | sh \
