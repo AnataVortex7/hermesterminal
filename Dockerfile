@@ -7,19 +7,14 @@ RUN apt-get update && apt-get install -y \
     git \
     tmux \
     ca-certificates \
-    gcc \
+    build-essential \
     && curl -fsSL https://tailscale.com/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
-# Debian chya sshd madhe Linux audit-write call asतो, jo container मधे
-# CAP_AUDIT_WRITE nasल्यामुळे "Operation not permitted" ने fatal होतो आणि
-# login झाल्या-झाल्या session band करतो. Ha ek chhota shim (LD_PRELOAD)
-# audit_open() ला -1 return karवतो, sshd samजते audit available nahi,
-# आणि नॉर्मल पुढे जातं (fatal होत नाही).
-RUN echo 'int audit_open(void) { return -1; }' > /tmp/fakeaudit.c && \
-    gcc -shared -fPIC -o /usr/local/lib/libfakeaudit.so /tmp/fakeaudit.c && \
-    rm /tmp/fakeaudit.c && \
-    apt-get purge -y gcc && apt-get autoremove -y
+# Compile robust audit shim to prevent any linux_audit crash
+COPY audit_shim.c /app/audit_shim.c
+RUN gcc -shared -fPIC -ldl /app/audit_shim.c -o /usr/local/lib/audit_shim.so && \
+    apt-get purge -y build-essential && apt-get autoremove -y
 
 # SSH setup
 RUN mkdir -p /var/run/sshd && \
