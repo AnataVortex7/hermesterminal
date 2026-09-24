@@ -347,6 +347,9 @@ print(f"   WS  /ssh    → SSH tunnel → port 22", flush=True)
 ThreadedHTTPServer(("0.0.0.0", PORT), Router).serve_forever()
 PYEOF
 
+
+# Start ttyd browser terminal on port 7681 with password authentication
+ttyd -p 7681 -c root:${SSH_PASSWORD:-Akshaypatil@1181} bash &
 python3 /tmp/router.py &
 ROUTER_PID=$!
 
