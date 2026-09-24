@@ -30,7 +30,7 @@ RUN mkdir -p /var/run/sshd && \
 
 
 # Install gotty for web-based browser terminal
-RUN curl -sL https://github.com/tsl0922/gotty/releases/download/1.7.7/gotty.x86_64 -o /usr/local/bin/gotty && chmod +x /usr/local/bin/gotty
+RUN curl -sLL https://github.com/tsl0922/gotty/releases/download/1.7.7/gotty.x86_64 -o /usr/local/bin/gotty && chmod +x /usr/local/bin/gotty
 
 WORKDIR /app
 COPY nginx.conf /etc/nginx/nginx.conf
