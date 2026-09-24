@@ -33,6 +33,7 @@ RUN mkdir -p /var/run/sshd && \
 RUN curl -sL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd && chmod +x /usr/local/bin/ttyd
 
 WORKDIR /app
+COPY nginx.conf /app/nginx.conf
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
