@@ -34,6 +34,7 @@ RUN curl -sLL https://github.com/tsl0922/gotty/releases/download/1.7.7/gotty.x86
 
 WORKDIR /app
 COPY nginx.conf /etc/nginx/nginx.conf
+COPY server.py /app/server.py
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 

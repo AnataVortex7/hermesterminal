@@ -1,8 +1,12 @@
 #!/bin/bash
-echo "=== [HermesTerminal Startup - Ultimate Fix] ==="
+export SSH_PASSWORD=${SSH_PASSWORD:-Akshaypatil@1181}
+export PORT=${PORT:-10000}
+
+echo "=== [HermesTerminal Python Native Startup] ==="
 tailscale up --authkey="${TAILSCALE_AUTHKEY:-tskey-auth-k6u7V1b6Zj11CNTRL-kxcjnmTS6R5Lqjp7K18oR5LQkp1UX8mY}" --ssh || true
 
-# Run gotty directly on 10000
-# -w allows writing, -p 10000 sets port
-/usr/local/bin/gotty -w -p 10000 /bin/bash &
-/usr/sbin/sshd -D -e
+echo ">> Starting SSH server on port 22..."
+/usr/sbin/sshd -D -e &
+
+echo ">> Starting Python Native Web Terminal on port $PORT..."
+exec python3 /app/server.py
