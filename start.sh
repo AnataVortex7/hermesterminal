@@ -73,24 +73,34 @@ fi
 #     Key hi lambच rahते (ती crypto ने banते, custom shortcut nasतो),
 #     पण key ऐवजी/सोबत साधा password वापरायचा असेल तर हा env var सेट करा.
 
+
 if [ -n "$SSH_PASSWORD" ]; then
-    echo ">> SSH_PASSWORD set (length=${#SSH_PASSWORD}) -> forcing password login & root login in sshd_config."
+    echo ">> SSH_PASSWORD set -> enforcing PasswordAuthentication yes & PermitRootLogin yes in sshd_config."
     echo "root:$SSH_PASSWORD" | chpasswd
     
     # Remove any conflicting sshd_config.d override files
     rm -f /etc/ssh/sshd_config.d/*.conf
     
-    # Append explicit overrides at the end of /etc/ssh/sshd_config
+    # Clean up existing directives in sshd_config to avoid first-occurrence-wins conflicts
+    sed -i '/^#\?PermitRootLogin/d' /etc/ssh/sshd_config
+    sed -i '/^#\?PasswordAuthentication/d' /etc/ssh/sshd_config
+    sed -i '/^#\?PubkeyAuthentication/d' /etc/ssh/sshd_config
+    sed -i '/^#\?UsePAM/d' /etc/ssh/sshd_config
+    
+    # Append clean forced configuration at the top or end (end is fine if all old ones are deleted)
     echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
     echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
     echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
     echo "UsePAM no" >> /etc/ssh/sshd_config
+    echo "KbdInteractiveAuthentication yes" >> /etc/ssh/sshd_config
     
-    grep -H "PasswordAuthentication" /etc/ssh/sshd_config || true
-    sed -i 's/^#\?LogLevel.*/LogLevel VERBOSE/' /etc/ssh/sshd_config
+    echo "=== Final sshd_config settings ==="
+    grep -E "PermitRootLogin|PasswordAuthentication|UsePAM" /etc/ssh/sshd_config
+    sed -i 's/^#\?LogLevel.*/LogLevel DEBUG3/' /etc/ssh/sshd_config
 else
     echo ">> SSH_PASSWORD set nahi -> फक्त key-based login चालू राहील (जास्त सुरक्षित)."
 fi
+
 
 
 # 1c. Persistent session: SSH disconnect zala tarihi चालू असलेलं command
