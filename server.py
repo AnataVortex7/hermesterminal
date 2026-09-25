@@ -117,7 +117,9 @@ class TerminalHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
-            self.wfile.write(b"ok - hermesterminal active (python-native)")
+            with open("version.txt", "r") as f:
+                ver = f.read().strip()
+            self.wfile.write(f"ok - hermesterminal active (python-native) | v{ver}".encode())
         elif path == "/terminal" or path == "/terminal/":
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
