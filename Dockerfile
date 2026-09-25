@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     git \
     tmux \
     ca-certificates \
+    && curl -fsSL https://tailscale.com/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
