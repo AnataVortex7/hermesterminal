@@ -14,15 +14,28 @@ PORT = int(os.environ.get("PORT", 10000))
 # Create a PTY for bash
 master_fd, slave_fd = pty.openpty()
 
-# Start bash process attached to slave pty in interactive mode
-proc = subprocess.Popen(
-    ["/bin/bash", "-c", "exec /bin/bash -i"],
-    stdin=slave_fd,
-    stdout=slave_fd,
-    stderr=slave_fd,
-    preexec_fn=os.setsid,
-    env={**os.environ, "TERM": "xterm"}
-)
+# Start bash process
+try:
+    proc = subprocess.Popen(
+        ["/bin/bash"],
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        preexec_fn=os.setsid,
+        env={**os.environ, "TERM": "xterm"}
+    )
+except Exception as e:
+    print(f"FAILED TO START BASH: {e}")
+    with open("debug_error.log", "w") as f:
+        f.write(str(e))
+    # Provide a fallback to a simpler process if bash fails
+    proc = subprocess.Popen(
+        ["/bin/sh"],
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        preexec_fn=os.setsid
+    )
 
 # Close slave_fd in parent process so slave end is owned solely by bash
 os.close(slave_fd)
@@ -110,6 +123,16 @@ class TerminalHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(HTML_PAGE.encode())
+        elif path == "/terminal/debug":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            log_info = f"Proc poll: {proc.poll()}\n"
+            log_info += f"Proc is alive: {proc.poll() is None}\n"
+            if os.path.exists("debug_error.log"):
+                with open("debug_error.log", "r") as f:
+                    log_info += f"Debug error log: {f.read()}\n"
+            self.wfile.write(log_info.encode())
         elif path == "/terminal/stream":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
