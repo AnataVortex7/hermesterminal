@@ -1,8 +1,9 @@
-
 import os
 import time
 import subprocess
 import requests
+import json
+import threading
 
 def run_cmd(cmd):
     res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -26,8 +27,8 @@ while True:
     code, out, err = run_cmd("git push origin main")
     print("Git push output:", out, err)
     
-    print("Waiting 45 seconds for Render deployment to update...")
-    time.sleep(45)
+    print("Waiting 60 seconds for Render deployment to update...")
+    time.sleep(60)
     
     # 3. Test Deployed Endpoint & Browser Automation Verification
     deployed_url = "https://hermesterminal.onrender.com/terminal/"
@@ -39,18 +40,52 @@ while True:
         if resp.status_code == 200 and "HermesTerminal" in resp.text:
             print("✅ Status 200 OK and HermesTerminal page loaded.")
             
-            # Now let's test sending a command via POST /terminal/input and verify SSE stream output
-            # We want to be 100% sure the terminal executes commands and returns output!
+            # Start background thread to listen to the live SSE stream on the deployed server
+            output_received = []
+            stream_connected = threading.Event()
+            
+            def read_deployed_stream():
+                try:
+                    stream_url = "https://hermesterminal.onrender.com/terminal/stream"
+                    stream_resp = requests.get(stream_url, stream=True, timeout=15)
+                    if stream_resp.status_code == 200:
+                        stream_connected.set()
+                    for line in stream_resp.iter_lines(chunk_size=1):
+                        if line:
+                            decoded = line.decode('utf-8')
+                            if decoded.startswith("data: "):
+                                data_json = decoded[6:]
+                                data_str = json.loads(data_json)
+                                output_received.append(data_str)
+                except Exception as stream_err:
+                    print("Stream thread error:", stream_err)
+            
+            t = threading.Thread(target=read_deployed_stream, daemon=True)
+            t.start()
+            
+            # Wait for stream connection
+            stream_connected.wait(timeout=10)
+            time.sleep(2)
+            
+            # Send test command to input
             test_payload = {"input": "echo 'SUCCESS_TEST_OK'\n"}
             post_resp = requests.post("https://hermesterminal.onrender.com/terminal/input", json=test_payload, timeout=10)
             print(f"POST terminal input status: {post_resp.status_code}")
             
             if post_resp.status_code == 200:
-                print("🎉 Terminal successfully accepted command and executed!")
-                print("Mission accomplished! Breaking deployment loop.")
-                break
+                time.sleep(4)  # Wait for command output to stream back
+                full_output = "".join(output_received)
+                print("Captured SSE stream output from deployed server:")
+                print(repr(full_output))
+                
+                if "SUCCESS_TEST_OK" in full_output:
+                    print("🎉 SUCCESS: Deployed terminal executed command and streamed output successfully!")
+                    print("Mission accomplished! Breaking deployment loop.")
+                    break
+                else:
+                    print("❌ Error: Command executed but output not found in SSE stream! Retrying push...")
             else:
-                print("❌ Terminal POST input failed. Retrying push...")
+                print("❌ Deployed terminal POST input failed. Retrying push...")
         else:
             print("❌ Deployed terminal page not ready or invalid status. Retrying push...")
     except Exception as e:

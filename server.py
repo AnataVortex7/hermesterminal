@@ -14,14 +14,17 @@ PORT = int(os.environ.get("PORT", 10000))
 # Create a PTY for bash
 master_fd, slave_fd = pty.openpty()
 
-# Start bash process attached to slave pty
+# Start bash process attached to slave pty in interactive mode
 proc = subprocess.Popen(
-    ["/bin/bash"],
+    ["/bin/bash", "-i"],
     stdin=slave_fd,
     stdout=slave_fd,
     stderr=slave_fd,
     preexec_fn=os.setsid
 )
+
+# Close slave_fd in parent process so slave end is owned solely by bash
+os.close(slave_fd)
 
 output_queue = queue.Queue()
 
@@ -117,10 +120,10 @@ class TerminalHandler(http.server.BaseHTTPRequestHandler):
                     try:
                         data = output_queue.get(timeout=0.5)
                         payload = json.dumps(data.decode('latin1'))
-                        self.wfile.write(f"data: {payload}\\n\\n".encode())
+                        self.wfile.write(f"data: {payload}\n\n".encode())
                         self.wfile.flush()
                     except queue.Empty:
-                        self.wfile.write(b":\\n\\n")
+                        self.wfile.write(b":\n\n")
                         self.wfile.flush()
             except Exception:
                 pass
@@ -153,5 +156,6 @@ class TerminalHandler(http.server.BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print(f"Starting native Python terminal server on port {PORT}...")
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
     server = socketserver.ThreadingTCPServer(("", PORT), TerminalHandler)
     server.serve_forever()
