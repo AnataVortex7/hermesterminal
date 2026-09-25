@@ -83,13 +83,13 @@ HTML_PAGE = """<!DOCTYPE html>
             fetch('/terminal/auth', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.parse(JSON.stringify({ password: pass }))
+                body: JSON.stringify({ password: pass })
             }).then(r => r.json()).then(res => {
                 if (res.success) {
                     document.getElementById('auth-overlay').style.display = 'none';
                     initTerm();
                 } else {
-                    document.getElementById('error-msginnerText = 'Incorrect Password!';
+                    document.getElementById('error-msg').innerText = 'Incorrect Password!';
                 }
             }).catch(() => {
                 document.getElementById('auth-overlay').style.display = 'none';
