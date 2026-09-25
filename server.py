@@ -113,21 +113,21 @@ class TerminalHandler(http.server.BaseHTTPRequestHandler):
         parsed_path = urllib.parse.urlparse(self.path)
         path = parsed_path.path
         
-        if path == "/":
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            with open("version.txt", "r") as f:
-                ver = f.read().strip()
-            self.wfile.write(f"ok - v{ver}".encode())
-        elif path == "/health" or path == "/version":
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            with open("version.txt", "r") as f:
-                ver = f.read().strip()
-            self.wfile.write(f"ok - v{ver}".encode())
-        elif path == "/terminal" or path == "/terminal/":
+        if path.startswith("/"):
+            # Check for direct matches first
+            if path == "/":
+                 # ... (keep existing / logic)
+            elif path in ["/health", "/version"]:
+                 # ... (keep existing /health logic)
+            elif path.startswith("/terminal/"):
+                # Handle all /terminal/ routes here
+                if path == "/terminal" or path == "/terminal/":
+                    # ...
+                elif path == "/terminal/debug":
+                    # ...
+                elif path == "/terminal/stream":
+                    # ...
+
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
