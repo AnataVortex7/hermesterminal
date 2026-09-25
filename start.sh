@@ -22,9 +22,9 @@ fi
 # Ensure terminal entry script is executable
 chmod +x /app/terminal_entry.sh
 
-# Start Python Terminal Server
-echo ">> Starting Hermes Python Terminal Server on port $PORT..."
-python3 /app/server.py &
+# Start ttyd on port 7681 with full bash and tmux support
+echo ">> Starting ttyd web terminal on port 7681..."
+ttyd -w -p 7681 /bin/bash /app/terminal_entry.sh &
 
 # Start SSH
 echo ">> Starting SSH server on port 22..."
