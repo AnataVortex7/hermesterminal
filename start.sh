@@ -38,6 +38,14 @@ fi
 # TERMUX_PUBLIC_KEY   -> Termux (phone / another cloud) varun generate keleli key
 # donhi asतील tar donhi authorized_keys madhe jातात, kontihi ek client connect karu shakते.
 mkdir -p /root/.ssh
+
+if [ -n "$SSH_PRIVATE_KEY" ]; then
+    echo ">> Installing SSH_PRIVATE_KEY..."
+    mkdir -p /root/.ssh
+    echo "$SSH_PRIVATE_KEY" > /root/.ssh/id_rsa
+    chmod 600 /root/.ssh/id_rsa
+fi
+
 chmod 700 /root/.ssh
 : > /root/.ssh/authorized_keys
 
