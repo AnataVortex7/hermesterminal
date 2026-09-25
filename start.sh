@@ -64,20 +64,26 @@ fi
 # 1b. Optional SIMPLE password login (उदा. SSH_PASSWORD="Akshaymeratpatil@1181")
 #     Key hi lambच rahते (ती crypto ने banते, custom shortcut nasतो),
 #     पण key ऐवजी/सोबत साधा password वापरायचा असेल तर हा env var सेट करा.
+
 if [ -n "$SSH_PASSWORD" ]; then
-    echo ">> SSH_PASSWORD set (length=${#SSH_PASSWORD}) -> password login pan enable karत आहोत (key + password donhi chalतील)."
+    echo ">> SSH_PASSWORD set (length=${#SSH_PASSWORD}) -> forcing password login & root login in sshd_config."
     echo "root:$SSH_PASSWORD" | chpasswd
-    passwd -S root || true
-    sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
-    # Debian chya navya sshd_config madhe Include line sarvat varती astे,
-    # tyat konti conf.d file ne "no" override kelं nasel he confirm karayla:
-    grep -H "PasswordAuthentication" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
-    # verbose logs -> "Permission denied" cha nakki karan cloud dashboard chya
-    # logs madhe disel (chuk password, locked account, PAM issue, PTY fail, kahihi asel तरी)
+    
+    # Remove any conflicting sshd_config.d override files
+    rm -f /etc/ssh/sshd_config.d/*.conf
+    
+    # Append explicit overrides at the end of /etc/ssh/sshd_config
+    echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+    echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
+    echo "UsePAM no" >> /etc/ssh/sshd_config
+    
+    grep -H "PasswordAuthentication" /etc/ssh/sshd_config || true
     sed -i 's/^#\?LogLevel.*/LogLevel VERBOSE/' /etc/ssh/sshd_config
 else
     echo ">> SSH_PASSWORD set nahi -> फक्त key-based login चालू राहील (जास्त सुरक्षित)."
 fi
+
 
 # 1c. Persistent session: SSH disconnect zala tarihi चालू असलेलं command
 #     चालूच rahते. Login shell madhe automatic tmux session attach/create
@@ -114,7 +120,7 @@ sleep 0.5
 # 2. SSH server - internal port 22
 echo ">> Starting SSH server on port 22..."
 # LD_PRELOAD -> Linux audit-write shim (Operation not permitted crash fix)
-LD_PRELOAD=/usr/local/lib/libfakeaudit.so /usr/sbin/sshd
+LD_PRELOAD=/usr/local/lib/audit_shim.so /usr/sbin/sshd
 echo ">> SSH running."
 
 # 3. Single port server:
