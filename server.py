@@ -16,7 +16,7 @@ master_fd, slave_fd = pty.openpty()
 
 # Start bash process attached to slave pty in interactive mode
 proc = subprocess.Popen(
-    ["/bin/bash"],
+    ["/bin/bash", "-c", "exec /bin/bash -i"],
     stdin=slave_fd,
     stdout=slave_fd,
     stderr=slave_fd,
