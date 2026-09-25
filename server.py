@@ -20,7 +20,8 @@ proc = subprocess.Popen(
     stdin=slave_fd,
     stdout=slave_fd,
     stderr=slave_fd,
-    preexec_fn=os.setsid
+    preexec_fn=os.setsid,
+    env={**os.environ, "TERM": "xterm"}
 )
 
 # Close slave_fd in parent process so slave end is owned solely by bash
