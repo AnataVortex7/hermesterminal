@@ -11,18 +11,30 @@ import queue
 
 PORT = int(os.environ.get("PORT", 10000))
 
-# Create a PTY for bash
+# Create PTY for interactive shell
 master_fd, slave_fd = pty.openpty()
 
-# Start bash process attached to slave pty
-proc = subprocess.Popen(
-    ["/bin/bash"],
-    stdin=slave_fd,
-    stdout=slave_fd,
-    stderr=slave_fd,
-    preexec_fn=os.setsid
-)
+try:
+    proc = subprocess.Popen(
+        ["/bin/bash"],
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        preexec_fn=os.setsid,
+        env={**os.environ, "TERM": "xterm"}
+    )
+except Exception as e:
+    with open("debug_error.log", "w") as f:
+        f.write(str(e))
+    proc = subprocess.Popen(
+        ["/bin/sh"],
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        preexec_fn=os.setsid
+    )
 
+os.close(slave_fd)
 output_queue = queue.Queue()
 
 def reader():
@@ -31,18 +43,16 @@ def reader():
             r, _, _ = select.select([master_fd], [], [], 0.1)
             if master_fd in r:
                 data = os.read(master_fd, 4096)
-                if not data:
-                    break
+                if not data: break
                 output_queue.put(data)
-        except Exception:
-            break
+        except Exception: break
 
 threading.Thread(target=reader, daemon=True).start()
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
 <head>
-    <title>HermesTerminal - Web Shell</title>
+    <title>HermesTerminal - Cloud Shell</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
@@ -65,7 +75,6 @@ HTML_PAGE = """<!DOCTYPE html>
         term.open(document.getElementById('terminal'));
         fitAddon.fit();
 
-        // Send user input to server
         term.onData(data => {
             fetch('/terminal/input', {
                 method: 'POST',
@@ -74,7 +83,6 @@ HTML_PAGE = """<!DOCTYPE html>
             });
         });
 
-        // Poll output using EventSource (SSE)
         const evtSource = new EventSource('/terminal/stream');
         evtSource.onmessage = function(event) {
             const data = JSON.parse(event.data);
@@ -93,14 +101,13 @@ HTML_PAGE = """<!DOCTYPE html>
 
 class TerminalHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        parsed_path = urllib.parse.urlparse(self.path)
-        path = parsed_path.path
-        
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
         if path == "/" or path == "/health" or path == "/version":
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
-            self.wfile.write(b"ok - hermesterminal active (python-native)")
+            self.wfile.write(b"ok")
         elif path == "/terminal" or path == "/terminal/":
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
@@ -117,10 +124,10 @@ class TerminalHandler(http.server.BaseHTTPRequestHandler):
                     try:
                         data = output_queue.get(timeout=0.5)
                         payload = json.dumps(data.decode('latin1'))
-                        self.wfile.write(f"data: {payload}\\n\\n".encode())
+                        self.wfile.write(f"data: {payload}\n\n".encode())
                         self.wfile.flush()
                     except queue.Empty:
-                        self.wfile.write(b":\\n\\n")
+                        self.wfile.write(b":\n\n")
                         self.wfile.flush()
             except Exception:
                 pass
@@ -129,14 +136,12 @@ class TerminalHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        parsed_path = urllib.parse.urlparse(self.path)
-        if parsed_path.path == "/terminal/input":
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/terminal/input":
             try:
-                content_length = int(self.headers.get('Content-Length', 0))
-                post_data = self.rfile.read(content_length)
-                data = json.loads(post_data.decode())
-                input_str = data.get("input", "")
-                os.write(master_fd, input_str.encode('latin1'))
+                length = int(self.headers.get('Content-Length', 0))
+                data = json.loads(self.rfile.read(length).decode())
+                os.write(master_fd, data.get("input", "").encode('latin1'))
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"OK")
@@ -149,9 +154,10 @@ class TerminalHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        pass # suppress logs
+        pass
 
 if __name__ == "__main__":
-    print(f"Starting native Python terminal server on port {PORT}...")
+    print(f"Starting Python terminal server on port {PORT}...")
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
     server = socketserver.ThreadingTCPServer(("", PORT), TerminalHandler)
     server.serve_forever()
