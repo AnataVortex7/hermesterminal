@@ -113,13 +113,20 @@ class TerminalHandler(http.server.BaseHTTPRequestHandler):
         parsed_path = urllib.parse.urlparse(self.path)
         path = parsed_path.path
         
-        if path == "/" or path == "/health" or path == "/version":
+        if path == "/":
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             with open("version.txt", "r") as f:
                 ver = f.read().strip()
-            self.wfile.write(f"ok - hermesterminal active (python-native) | v{ver}".encode())
+            self.wfile.write(f"ok - v{ver}".encode())
+        elif path == "/health" or path == "/version":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            with open("version.txt", "r") as f:
+                ver = f.read().strip()
+            self.wfile.write(f"ok - v{ver}".encode())
         elif path == "/terminal" or path == "/terminal/":
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
