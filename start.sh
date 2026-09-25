@@ -24,7 +24,7 @@ chmod +x /app/terminal_entry.sh
 
 # Start Python Terminal Server
 echo ">> Starting Hermes Python Terminal Server on port $PORT..."
-python3 server.py &
+python3 /app/server.py &
 
 # Start SSH
 echo ">> Starting SSH server on port 22..."
