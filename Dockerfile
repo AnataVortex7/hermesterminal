@@ -1,20 +1,17 @@
-FROM python:3.10-slim
+FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y \
-    openssh-server \
-    curl \
-    bash \
-    git \
-    tmux \
-    ca-certificates \
-    && curl -fsSL https://tailscale.com/install.sh | sh \
+# Tailscale static binaries (no apt repo / install script needed)
+COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscaled /usr/local/bin/tailscaled
+COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscale  /usr/local/bin/tailscale
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash tmux git curl ca-certificates openssh-server python3-minimal procps \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY . /app/
-RUN chmod +x /app/start.sh /app/server.py
+COPY start.sh health.py /app/
+RUN chmod +x /app/start.sh
 
-ENV PORT=10000
+ENV PORT=10000 TZ=Asia/Kolkata
 EXPOSE 10000
-
 CMD ["/app/start.sh"]

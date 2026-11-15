@@ -1,41 +1,50 @@
 #!/bin/bash
-set -e
+# Always-on box. SSH is reachable ONLY through your Tailscale network, no login/password.
+export TZ="${TZ:-Asia/Kolkata}"
+export HOME=/root
+: "${TAILSCALE_AUTHKEY:?Set TAILSCALE_AUTHKEY env var}"
+HOST="${TAILSCALE_HOSTNAME:-hermes-cloud}"
+STATE_DIR="${TS_STATE_DIR:-/var/lib/tailscale}"
+mkdir -p /var/run/tailscale /var/run/sshd "$STATE_DIR"
 
-export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-export TZ="Asia/Kolkata"
+# --- sshd: bound to localhost only; tailnet is the security boundary ---
+passwd -d root >/dev/null 2>&1
+cat > /etc/ssh/sshd_config.hermes <<CFG
+Port 2222
+ListenAddress 127.0.0.1
+HostKey /etc/ssh/ssh_host_ed25519_key
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords yes
+UsePAM no
+PrintMotd no
+CFG
+[ -f /etc/ssh/ssh_host_ed25519_key ] || ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key
+start_sshd() { pgrep -f "sshd -f /etc/ssh/sshd_config.hermes" >/dev/null || /usr/sbin/sshd -f /etc/ssh/sshd_config.hermes; }
 
-PORT="${PORT:-10000}"
+start_ts() {
+  pkill tailscaled 2>/dev/null; sleep 1
+  tailscaled --state="$STATE_DIR/tailscaled.state" \
+             --tun=userspace-networking \
+             --socks5-server=localhost:1055 >/var/log/tailscaled.log 2>&1 &
+  sleep 3
+  tailscale up --authkey="$TAILSCALE_AUTHKEY" --hostname="$HOST" \
+               --accept-dns=false --accept-routes=false \
+    || echo "!! tailscale up failed, will retry"
+  # expose local sshd as port 22 on the tailnet only
+  tailscale serve --bg --tcp=22 tcp://localhost:2222 || echo "!! tailscale serve failed"
+  echo ">> Tailscale IP: $(tailscale ip -4 2>/dev/null)"
+}
 
-echo "=== [HermesTerminal Startup with Tailscale] ==="
+python3 /app/health.py &
+start_sshd
+start_ts
 
-# 0. Tailscale setup
-if [ -n "$TAILSCALE_AUTHKEY" ]; then
-    echo ">> Tailscale join करत आहोत..."
-    mkdir -p /var/run/tailscale /var/lib/tailscale
-    tailscaled --state=/var/lib/tailscale/tailscaled.state \
-        --tun=userspace-networking \
-        --socks5-server=localhost:1055 > /var/log/tailscaled.log 2>&1 &
-    sleep 2
-    tailscale up \
-        --authkey="$TAILSCALE_AUTHKEY" \
-        --hostname="${TAILSCALE_HOSTNAME:-hermes-cloud}" \
-        --accept-routes=false \
-        --ssh=true || echo "!! Tailscale up fail झाले"
-    TS_IP=$(tailscale ip -4 2>/dev/null || echo "??")
-    echo ">> Tailscale IP: $TS_IP"
-fi
-
-# Set root password if needed
-if [ -n "$SSH_PASSWORD" ]; then
-    echo "root:$SSH_PASSWORD" | chpasswd 2>/dev/null || true
-fi
-
-# Start SSH server in background if needed
-if command -v sshd >/dev/null 2>&1; then
-    mkdir -p /var/run/sshd
-    /usr/sbin/sshd -d -e &
-fi
-
-# Start Python native terminal server directly on $PORT
-echo ">> Starting Python Native Web Terminal & Health Server on port $PORT..."
-python3 server.py
+fails=0
+while true; do   # watchdog
+  if tailscale status >/dev/null 2>&1 && pgrep -x tailscaled >/dev/null; then fails=0
+  else fails=$((fails+1)); [ "$fails" -ge 3 ] && { echo "!! restarting tailscaled"; start_ts; fails=0; }; fi
+  start_sshd
+  pgrep -f health.py >/dev/null || { python3 /app/health.py & }
+  sleep 20
+done
