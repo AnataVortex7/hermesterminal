@@ -5,7 +5,7 @@ COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscaled /usr/
 COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscale  /usr/local/bin/tailscale
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      bash tmux git curl ca-certificates openssh-server python3-minimal procps \
+      bash tmux git curl ca-certificates openssh-server python3 procps \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
