@@ -37,6 +37,7 @@ start_ts() {
 }
 
 python3 /app/health.py &
+python3 /app/oomguard.py >>/var/log/oomguard.out 2>&1 &
 start_sshd
 start_ts
 
@@ -46,5 +47,6 @@ while true; do   # watchdog
   else fails=$((fails+1)); [ "$fails" -ge 3 ] && { echo "!! restarting tailscaled"; start_ts; fails=0; }; fi
   start_sshd
   pgrep -f health.py >/dev/null || { python3 /app/health.py & }
+  pgrep -f oomguard.py >/dev/null || { python3 /app/oomguard.py >>/var/log/oomguard.out 2>&1 & }
   sleep 20
 done

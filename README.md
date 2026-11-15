@@ -14,3 +14,13 @@ Security model: sshd listens on 127.0.0.1 only and is exposed via `tailscale ser
 solely inside your tailnet. Anyone/any device on your tailnet gets root, so only
 add your own devices (don't share this node to others).
 Self-ping (health.py): GET <public url>/health with 3s timeout, then sleep 5s, forever.
+
+Dashboard: open your public URL "/" (read-only: CPU/RAM of container + shared host, disk, load, Tailscale/sshd status,
+top processes, red alerts). Auto-refreshes every 2s while the tab is visible; the server samples /proc only while
+someone is viewing "/" or "/api" (self-ping uses /health and never triggers sampling), so idle cost is ~0.
+Command lines are shown with passwords/keys/tokens redacted.
+
+OOM guard (oomguard.py): polls the cgroup memory every 25ms (page cache excluded). If free RAM < OOM_FREE_PCT (default 10%) of the
+limit, it SIGKILLs the biggest process (never tailscaled/sshd/health/oomguard/start.sh) after writing a message to that process's
+stderr/stdout, so the SSH caller sees "[OOMGUARD] ... Killed PID ..." and exit code 137. Kills are logged in /var/log/oomguard.log
+and shown on the dashboard. Env: OOM_FREE_PCT, OOM_POLL_MS, OOM_LIMIT_BYTES (override limit).

@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY start.sh health.py /app/
+COPY start.sh health.py oomguard.py /app/
 RUN chmod +x /app/start.sh
 
 ENV PORT=10000 TZ=Asia/Kolkata
