@@ -1,15 +1,27 @@
-"""Single public server: /health -> 'ok' (used by self-ping), / -> read-only dashboard, /api -> JSON.
-No shell, no write endpoints. Dashboard samples /proc only while someone is viewing it, so idle cost is ~0 and
-extra viewers / the 5s self-ping never add load (everyone reads one cached sample)."""
-import os, re, json, time, threading, subprocess, urllib.request
+"""Single public server: /health -> 'ok' (self-ping), / -> read-only dashboard, /api -> JSON. No shell, no write endpoints.
+
+Shows ONLY this container's plan allotment (cgroup) - never the host machine:
+  CPU  = cgroup cpu.stat vs the vCPU quota        RAM = cgroup working set (page cache excluded) vs the cgroup limit
+  Disk = `du` of /root,/app,/tmp vs DISK_LIMIT_MB  Uptime = since the container's PID 1 started
+Limits that cannot be read from inside can be set: CPU_LIMIT (vCPU), RAM_LIMIT_MB, DISK_LIMIT_MB
+(defaults when nothing is visible: 0.1 vCPU / 512 MB / 15 GB, same as the hermes repo).
+Sampling runs only while somebody views "/" or "/api" (idle cost ~0); /health never wakes it."""
+import os, re, json, time, shutil, threading, subprocess, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", 10000))
-NCPU = os.cpu_count() or 1
 TICK = os.sysconf("SC_CLK_TCK")
 PAGE = os.sysconf("SC_PAGE_SIZE")
-ACTIVE = 10          # seconds after last dashboard request during which we keep sampling
+ACTIVE = 10          # keep sampling this many seconds after the last dashboard request
 INTERVAL = 2         # sampling period (matches the page's 2s refresh)
+DISK_EVERY = 120     # du at most this often, only while watched
+DISK_PATHS = [p for p in os.environ.get("DISK_PATHS", "/root,/app,/tmp").split(",") if p]
+
+def envf(name, default):
+    try:
+        return float((os.environ.get(name) or "").strip() or default)
+    except ValueError:
+        return float(default)
 
 def rd(p):
     try:
@@ -17,6 +29,10 @@ def rd(p):
             return f.read()
     except Exception:
         return None
+
+def redact(c):
+    c = re.sub(r"(?i)(authkey|token|password|passwd|secret|key)(=|\s+)\S+", r"\1=***", c)
+    return re.sub(r"tskey-\S+", "***", c)
 
 # ---------------- keep-alive self-ping (3s timeout, 5s gap) ----------------
 def keepalive():
@@ -32,64 +48,72 @@ def keepalive():
             pass
         time.sleep(5)
 
-# ---------------- metrics ----------------
-def meminfo():
-    d = {}
-    for line in (rd("/proc/meminfo") or "").splitlines():
-        k, _, v = line.partition(":")
-        try:
-            d[k] = int(v.split()[0]) * 1024
-        except Exception:
-            pass
-    return d
-
-def cg_mem(host_total):
+# ---------------- container metrics (cgroup only) ----------------
+def cg_mem():
+    """(working_set_bytes, limit_bytes_or_None, source) from the cgroup, or (None, None, 'processes')"""
     cur = rd("/sys/fs/cgroup/memory.current")
-    mx = rd("/sys/fs/cgroup/memory.max")
-    stat = rd("/sys/fs/cgroup/memory.stat") or ""
-    key = "inactive_file"
-    if cur is None:  # cgroup v1
+    if cur is not None:                                   # cgroup v2
+        mx, stat, key, src = rd("/sys/fs/cgroup/memory.max"), rd("/sys/fs/cgroup/memory.stat") or "", "inactive_file", "cgroup-v2"
+    else:                                                 # cgroup v1
         cur = rd("/sys/fs/cgroup/memory/memory.usage_in_bytes")
-        mx = rd("/sys/fs/cgroup/memory/memory.limit_in_bytes")
-        stat = rd("/sys/fs/cgroup/memory/memory.stat") or ""
-        key = "total_inactive_file"
-    if cur is None:
-        return None, host_total
+        if cur is None:
+            return None, None, "processes"
+        mx, stat, key, src = (rd("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+                              rd("/sys/fs/cgroup/memory/memory.stat") or "", "total_inactive_file", "cgroup-v1")
     used = int(cur)
     for line in stat.splitlines():
         if line.startswith(key + " "):
-            used -= int(line.split()[1])  # working set, like docker stats
+            used -= int(line.split()[1])
     try:
         limit = int(mx)
-        if limit <= 0 or limit > host_total:
-            limit = host_total
+        if limit <= 0 or limit >= 1 << 60:
+            limit = None
     except Exception:
-        limit = host_total
-    return max(used, 0), limit
+        limit = None                                      # "max" = no limit visible
+    return max(used, 0), limit, src
 
-def cg_cpu():
-    """returns (usage_usec, cpus_limit) or None"""
-    s = rd("/sys/fs/cgroup/cpu.stat")
-    if not s:
-        return None
-    usage = None
-    for line in s.splitlines():
-        if line.startswith("usage_usec"):
-            usage = int(line.split()[1])
-    cpus = NCPU
+def ram_limit(cg_limit):
+    env = envf("RAM_LIMIT_MB", 0)
+    if env:
+        return env * 1048576
+    return cg_limit or 512 * 1048576
+
+def cg_cpu_usec():
+    for path in ("/sys/fs/cgroup/cpu.stat",):
+        for line in (rd(path) or "").splitlines():
+            if line.startswith("usage_usec"):
+                return int(line.split()[1]) / 1e6
+    ns = rd("/sys/fs/cgroup/cpuacct/cpuacct.usage") or rd("/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage")
+    return int(ns) / 1e9 if ns else None
+
+def cpu_limit():
+    env = envf("CPU_LIMIT", 0)
+    if env:
+        return env
     m = (rd("/sys/fs/cgroup/cpu.max") or "").split()
     if len(m) == 2 and m[0] != "max":
         try:
-            cpus = max(int(m[0]) / int(m[1]), 0.01)
+            return max(int(m[0]) / int(m[1]), 0.01)
         except Exception:
             pass
-    return (usage, cpus) if usage is not None else None
+    q = rd("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") or rd("/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us")
+    p = rd("/sys/fs/cgroup/cpu/cpu.cfs_period_us") or rd("/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us")
+    try:
+        if q and int(q) > 0:
+            return int(q) / int(p)
+    except Exception:
+        pass
+    return 0.1
 
-def host_cpu_ticks():
-    p = (rd("/proc/stat") or "").split("\n", 1)[0].split()[1:]
-    v = [int(x) for x in p]
-    idle = v[3] + (v[4] if len(v) > 4 else 0)
-    return sum(v) - idle, sum(v)
+def container_uptime():
+    """seconds since this container's PID 1 started (/proc/uptime alone is the HOST's)"""
+    try:
+        host = float((rd("/proc/uptime") or "0").split()[0])
+        s = rd("/proc/1/stat")
+        start = int(s[s.rindex(")") + 2:].split()[19])
+        return max(0, int(host - start / TICK))
+    except Exception:
+        return 0
 
 def procs():
     out = {}
@@ -107,15 +131,18 @@ def procs():
             pass
     return out
 
-def redact(c):
-    c = re.sub(r"(?i)(authkey|token|password|passwd|secret|key)(=|\s+)\S+", r"\1=***", c)
-    return re.sub(r"tskey-\S+", "***", c)
-
 def cmdline(pid):
     return redact((rd(f"/proc/{pid}/cmdline") or "").replace("\0", " ").strip())[:90]
 
+def ts_status():
+    try:
+        r = subprocess.run(["tailscale", "status", "--json", "--peers=false"],
+                           capture_output=True, text=True, timeout=3)
+        return {"state": json.loads(r.stdout).get("BackendState")}
+    except Exception:
+        return {"state": "unknown"}
+
 def guard_info():
-    """OOM guard status + recent kills (written by oomguard.py)"""
     alive = False
     try:
         pid = int((rd("/run/oomguard.pid") or "0").strip())
@@ -130,22 +157,27 @@ def guard_info():
         k["cmd"] = redact(k.get("cmd", ""))[:90]
     return alive, kills
 
-def ts_status():
-    try:
-        r = subprocess.run(["tailscale", "status", "--json", "--peers=false"],
-                           capture_output=True, text=True, timeout=3)
-        j = json.loads(r.stdout)
-        return {"state": j.get("BackendState"), "ip": ""}
-    except Exception:
-        return {"state": "unknown", "ip": ""}
+# ---- disk: du in a separate thread so the sampler never blocks ----
+DISK = {"used": 0.0, "at": 0.0, "busy": False}
+DISK_LIMIT = envf("DISK_LIMIT_MB", 15360) * 1048576
+
+def du_scan():
+    total = 0.0
+    cmd0 = ["nice", "-n", "19"] if shutil.which("nice") else []
+    for p in DISK_PATHS:
+        try:
+            out = subprocess.check_output(cmd0 + ["du", "-xsm", p], stderr=subprocess.DEVNULL, timeout=30).decode()
+            total += float(out.split()[0]) * 1048576
+        except Exception:
+            pass
+    DISK["used"], DISK["at"], DISK["busy"] = total, time.time(), False
 
 # ---------------- sampler (runs only while the dashboard is being watched) ----------------
 S = {"data": None, "last_view": 0.0}
 
 def sampler():
     prev = None
-    ts = {"state": "?", "ip": ""}
-    ts_at = 0
+    ts, ts_at = {"state": "?"}, 0
     while True:
         if time.time() - S["last_view"] > ACTIVE:
             prev = None
@@ -153,64 +185,55 @@ def sampler():
             continue
         now = time.time()
         pr = procs()
-        cg = cg_cpu()
-        hb, ht = host_cpu_ticks()
-        cur = {"t": now, "pr": pr, "cg": cg[0] if cg else None, "hb": hb, "ht": ht}
+        cg_s = cg_cpu_usec()
+        ticks_total = sum(v[1] for v in pr.values()) / TICK
+        cur = {"t": now, "pr": pr, "cg": cg_s, "pt": ticks_total}
+        if not DISK["busy"] and now - DISK["at"] > DISK_EVERY:
+            DISK["busy"] = True
+            threading.Thread(target=du_scan, daemon=True).start()
         if prev is not None:
             dt = max(now - prev["t"], 0.001)
-            mi = meminfo()
-            host_total = mi.get("MemTotal", 1)
-            host_used = host_total - mi.get("MemAvailable", 0)
-            c_used, c_limit = cg_mem(host_total)
-            if c_used is None:
-                c_used, c_limit = host_used, host_total
-            cpus = cg[1] if cg else NCPU
-            if cg and prev["cg"] is not None:
-                c_cpu = (cg[0] - prev["cg"]) / 1e6 / dt / cpus * 100
+            lim_cpu = cpu_limit()
+            used_c, cg_lim, mem_src = cg_mem()
+            if used_c is None:
+                used_c = sum(v[2] for v in pr.values())
+            lim_mem = ram_limit(cg_lim)
+            if cg_s is not None and prev["cg"] is not None:
+                c_cpu = (cg_s - prev["cg"]) / dt / lim_cpu * 100
             else:
-                c_cpu = (hb - prev["hb"]) / max(ht - prev["ht"], 1) * 100
-            h_cpu = (hb - prev["hb"]) / max(ht - prev["ht"], 1) * 100
+                c_cpu = max(ticks_total - prev["pt"], 0) / dt / lim_cpu * 100
             plist = []
             for pid, (name, ticks, rss) in pr.items():
                 old = prev["pr"].get(pid)
-                pc = ((ticks - old[1]) / TICK / dt * 100) if old else 0.0
-                plist.append({"pid": pid, "name": name, "cpu": round(pc, 1), "rss": rss})
+                pc = ((ticks - old[1]) / TICK / dt / lim_cpu * 100) if old else 0.0
+                plist.append({"pid": pid, "name": name, "cpu": round(min(pc, 999), 1), "rss": rss})
             top = sorted(plist, key=lambda x: (x["cpu"], x["rss"]), reverse=True)[:8]
-            for t in top:
-                t["cmd"] = cmdline(t["pid"])
             top_mem = sorted(plist, key=lambda x: x["rss"], reverse=True)[:8]
-            for t in top_mem:
+            for t in top + top_mem:
                 t["cmd"] = cmdline(t["pid"])
             if now - ts_at > 10:
                 ts, ts_at = ts_status(), now
-            try:
-                st = os.statvfs("/")
-                disk_total, disk_used = st.f_blocks * st.f_frsize, (st.f_blocks - st.f_bavail) * st.f_frsize
-            except Exception:
-                disk_total = disk_used = 0
-            la = (rd("/proc/loadavg") or "0 0 0").split()[:3]
             names = {p["name"] for p in plist}
+            g_alive, kills = guard_info()
             alerts = []
-            if c_cpu > 85: alerts.append(f"Container CPU high: {c_cpu:.0f}%")
-            if c_limit and c_used / c_limit > 0.85: alerts.append(f"Container RAM high: {c_used / c_limit * 100:.0f}%")
-            if host_total and host_used / host_total > 0.90: alerts.append("HOST RAM high (shared server under pressure)")
-            if h_cpu > 90: alerts.append(f"HOST CPU high: {h_cpu:.0f}% (shared server busy)")
-            if disk_total and disk_used / disk_total > 0.90: alerts.append("Disk almost full")
+            if c_cpu > 85: alerts.append(f"CPU high: {c_cpu:.0f}% of {lim_cpu:g} vCPU")
+            if used_c / lim_mem > 0.85: alerts.append(f"RAM high: {used_c / lim_mem * 100:.0f}%")
+            if DISK["used"] / DISK_LIMIT > 0.90: alerts.append("Disk almost full")
             if ts.get("state") != "Running": alerts.append(f"Tailscale state: {ts.get('state')}")
             if "sshd" not in names: alerts.append("sshd is NOT running")
-            g_alive, kills = guard_info()
             if not g_alive: alerts.append("OOM guard is NOT running")
             if kills:
                 try:
-                    age = time.time() - time.mktime(time.strptime(kills[0]["t"], "%Y-%m-%d %H:%M:%S"))
+                    age = now - time.mktime(time.strptime(kills[0]["t"], "%Y-%m-%d %H:%M:%S"))
                     if age < 600: alerts.append(f"OOM guard killed {kills[0]['name']} (PID {kills[0]['pid']}) at {kills[0]['t']}")
                 except Exception: pass
             S["data"] = {
-                "time": time.strftime("%H:%M:%S"), "uptime": int(float((rd("/proc/uptime") or "0").split()[0])),
-                "cpus": round(cpus, 2), "c_cpu": round(c_cpu, 1), "h_cpu": round(h_cpu, 1),
-                "c_mem": c_used, "c_mem_limit": c_limit, "h_mem": host_used, "h_mem_total": host_total,
-                "disk": disk_used, "disk_total": disk_total, "load": la, "ts": ts,
-                "nproc": len(pr), "guard": g_alive, "kills": kills, "top_cpu": top, "top_mem": top_mem, "alerts": alerts,
+                "time": time.strftime("%H:%M:%S"), "uptime": container_uptime(),
+                "cpus": round(lim_cpu, 3), "c_cpu": round(min(c_cpu, 100), 1),
+                "c_mem": used_c, "c_mem_limit": lim_mem,
+                "disk": DISK["used"], "disk_total": DISK_LIMIT, "disk_at": DISK["at"],
+                "src": mem_src, "ts": ts, "nproc": len(pr), "guard": g_alive, "kills": kills,
+                "top_cpu": top, "top_mem": top_mem, "alerts": alerts,
             }
         prev = cur
         time.sleep(INTERVAL)
@@ -229,7 +252,7 @@ th{color:#8b98a9}.al{background:#3b1418;border:1px solid #f85149;border-radius:8
 </style>
 <h1>hermes-cloud <span id=t></span></h1><div id=al></div>
 <div class=g id=cards></div>
-<div class=c style="margin-top:10px"><b>Top by CPU</b><table id=tc></table></div>
+<div class=c style="margin-top:10px"><b>Top by CPU (% of vCPU limit)</b><table id=tc></table></div>
 <div class=c style="margin-top:10px"><b>Top by RAM</b><table id=tm></table></div>
 <div class=c style="margin-top:10px"><b id=gh>OOM guard</b><table id=tk></table></div>
 <script>
@@ -247,14 +270,12 @@ async function tick(){
   $('t').textContent=d.time+' · up '+up(d.uptime);
   $('al').innerHTML=d.alerts.length?'<div class=al>⚠ '+d.alerts.join('<br>⚠ ')+'</div>':'';
   document.title=(d.alerts.length?'⚠ ':'')+'hermes';
-  const cp=d.c_mem/d.c_mem_limit*100,hp=d.h_mem/d.h_mem_total*100,dp=d.disk_total?d.disk/d.disk_total*100:0;
+  const cp=d.c_mem/d.c_mem_limit*100,dp=d.disk_total?d.disk/d.disk_total*100:0;
   $('cards').innerHTML=
-   card('Container CPU ('+d.cpus+' vCPU)',d.c_cpu,d.c_cpu+'%')+
-   card('Container RAM',cp,mb(d.c_mem)+' / '+mb(d.c_mem_limit))+
-   card('Host CPU (shared)',d.h_cpu,d.h_cpu+'%  · load '+d.load.join(' '))+
-   card('Host RAM (shared)',hp,mb(d.h_mem)+' / '+mb(d.h_mem_total))+
-   card('Disk /',dp,mb(d.disk)+' / '+mb(d.disk_total))+
-   `<div class=c><b>Tailscale</b><span class="${d.ts.state=='Running'?'ok':''}">${d.ts.state}</span> ${d.ts.ip}<br>${d.nproc} processes</div>`;
+   card('CPU ('+d.cpus+' vCPU)',d.c_cpu,d.c_cpu+'%')+
+   card('RAM',cp,mb(d.c_mem)+' / '+mb(d.c_mem_limit))+
+   card('Disk',dp,d.disk_at?mb(d.disk)+' / '+mb(d.disk_total):'measuring…')+
+   `<div class=c><b>Tailscale</b><span class="${d.ts.state=='Running'?'ok':''}">${d.ts.state}</span><br>${d.nproc} processes</div>`;
   rows($('tc'),d.top_cpu);rows($('tm'),d.top_mem);
   $('gh').textContent='OOM guard: '+(d.guard?'active':'NOT RUNNING')+(d.kills.length?' · recent kills':' · no kills yet');
   const k=$('tk');k.innerHTML='';d.kills.forEach(x=>{const r=k.insertRow();[x.t,x.pid,x.name,mb(x.rss),x.free_pct+'% free',x.cmd].forEach(v=>{r.insertCell().textContent=v})});

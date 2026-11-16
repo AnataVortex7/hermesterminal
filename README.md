@@ -24,3 +24,7 @@ OOM guard (oomguard.py): polls the cgroup memory every 25ms (page cache excluded
 limit, it SIGKILLs the biggest process (never tailscaled/sshd/health/oomguard/start.sh) after writing a message to that process's
 stderr/stdout, so the SSH caller sees "[OOMGUARD] ... Killed PID ..." and exit code 137. Kills are logged in /var/log/oomguard.log
 and shown on the dashboard. Env: OOM_FREE_PCT, OOM_POLL_MS, OOM_LIMIT_BYTES (override limit).
+
+Dashboard shows ONLY this container's plan allotment (no host CPU/RAM/load/uptime): CPU vs vCPU quota, RAM working set vs cgroup limit,
+disk via `du` of /root,/app,/tmp, uptime since PID 1 started. If the platform hides the limits set CPU_LIMIT (vCPU), RAM_LIMIT_MB, DISK_LIMIT_MB
+(defaults 0.1 vCPU / 512 MB / 15 GB). oomguard uses the same RAM limit.

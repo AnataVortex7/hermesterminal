@@ -20,19 +20,6 @@ def rd(p):
         with open(p) as f: return f.read()
     except Exception: return None
 
-def host_total():
-    for l in (rd("/proc/meminfo") or "").splitlines():
-        if l.startswith("MemTotal"): return int(l.split()[1]) * 1024
-    return 1 << 30
-
-def host_used():
-    t = a = 0
-    for l in (rd("/proc/meminfo") or "").splitlines():
-        if l.startswith("MemTotal"): t = int(l.split()[1]) * 1024
-        elif l.startswith("MemAvailable"): a = int(l.split()[1]) * 1024
-    return t - a
-
-HT = host_total()
 V2 = os.path.exists("/sys/fs/cgroup/memory.current")
 if V2:
     CUR, STAT, MAX = "/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.stat", "/sys/fs/cgroup/memory.max"
@@ -45,12 +32,17 @@ else:
     CUR = None
 
 def limit():
+    """This container's RAM allotment: OOM_LIMIT_BYTES > RAM_LIMIT_MB > cgroup limit > 512 MB. Never the host's size."""
     if FORCE_LIMIT: return FORCE_LIMIT
     try:
+        env = float(os.environ.get("RAM_LIMIT_MB") or 0)
+        if env: return int(env * 1048576)
+    except ValueError: pass
+    try:
         v = int(rd(MAX))
-        if 0 < v < HT: return v
+        if 0 < v < 1 << 60: return v
     except Exception: pass
-    return HT
+    return 512 * 1048576
 
 if CUR:
     fc, fs = os.open(CUR, os.O_RDONLY), os.open(STAT, os.O_RDONLY)
@@ -61,7 +53,15 @@ if CUR:
                 if line.startswith(k): cur -= int(line[len(k):])
         return cur
 else:
-    used = host_used
+    def used():                      # no cgroup visible: sum of this container's own processes (PID namespace)
+        tot = 0
+        for p in os.listdir("/proc"):
+            if p.isdigit():
+                st = rd(f"/proc/{p}/statm")
+                if st:
+                    try: tot += int(st.split()[1]) * PAGE
+                    except Exception: pass
+        return tot
 
 def ppid(pid):
     s = rd(f"/proc/{pid}/stat")
