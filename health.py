@@ -161,7 +161,24 @@ def guard_info():
 DISK = {"used": 0.0, "at": 0.0, "busy": False}
 DISK_LIMIT = envf("DISK_LIMIT_MB", 15360) * 1048576
 
+def own_volume():
+    """(used_bytes, total_bytes) of "/" when it is this instance's OWN block device (ext4/xfs on /dev/..) = the real usable disk."""
+    try:
+        for ln in (rd("/proc/mounts") or "").splitlines():
+            f = ln.split()
+            if len(f) >= 3 and f[1] == "/" and f[0].startswith("/dev/") and f[2] in ("ext4", "ext3", "xfs", "btrfs"):
+                v = os.statvfs("/")
+                return (v.f_blocks - v.f_bfree) * v.f_frsize, v.f_blocks * v.f_frsize
+    except Exception:
+        pass
+    return None
+
 def du_scan():
+    if not os.environ.get("DISK_LIMIT_MB"):
+        vol = own_volume()
+        if vol:
+            DISK["used"], DISK["total"], DISK["at"], DISK["busy"] = vol[0], vol[1], time.time(), False
+            return
     total = 0.0
     cmd0 = ["nice", "-n", "19"] if shutil.which("nice") else []
     for p in DISK_PATHS:
@@ -218,7 +235,7 @@ def sampler():
             alerts = []
             if c_cpu > 85: alerts.append(f"CPU high: {c_cpu:.0f}% of {lim_cpu:g} vCPU")
             if used_c / lim_mem > 0.85: alerts.append(f"RAM high: {used_c / lim_mem * 100:.0f}%")
-            if DISK["used"] / DISK_LIMIT > 0.90: alerts.append("Disk almost full")
+            if DISK["used"] / DISK.get("total", DISK_LIMIT) > 0.90: alerts.append("Disk almost full")
             if ts.get("state") != "Running": alerts.append(f"Tailscale state: {ts.get('state')}")
             if "sshd" not in names: alerts.append("sshd is NOT running")
             if not g_alive: alerts.append("OOM guard is NOT running")
@@ -231,7 +248,7 @@ def sampler():
                 "time": time.strftime("%H:%M:%S"), "uptime": container_uptime(),
                 "cpus": round(lim_cpu, 3), "c_cpu": round(min(c_cpu, 100), 1),
                 "c_mem": used_c, "c_mem_limit": lim_mem,
-                "disk": DISK["used"], "disk_total": DISK_LIMIT, "disk_at": DISK["at"],
+                "disk": DISK["used"], "disk_total": DISK.get("total", DISK_LIMIT), "disk_at": DISK["at"],
                 "src": mem_src, "ts": ts, "nproc": len(pr), "guard": g_alive, "kills": kills,
                 "top_cpu": top, "top_mem": top_mem, "alerts": alerts,
             }
