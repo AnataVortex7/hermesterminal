@@ -28,3 +28,8 @@ and shown on the dashboard. Env: OOM_FREE_PCT, OOM_POLL_MS, OOM_LIMIT_BYTES (ove
 Dashboard shows ONLY this container's plan allotment (no host CPU/RAM/load/uptime): CPU vs vCPU quota, RAM working set vs cgroup limit,
 disk via `du` of /root,/app,/tmp, uptime since PID 1 started. If the platform hides the limits set CPU_LIMIT (vCPU), RAM_LIMIT_MB, DISK_LIMIT_MB
 (defaults 0.1 vCPU / 512 MB / 15 GB). oomguard uses the same RAM limit.
+
+Container-aware commands (cgshim.py): `free`, `nproc`, `uptime`, `top`, `df`, `lscpu` are symlinked in /usr/local/bin and show ONLY this
+container's plan (cgroup limit / RAM_LIMIT_MB, CPU_LIMIT, DISK_LIMIT_MB), so an SSH user or assistant never sees the host's totals and does not
+need to be told the box is shared. Use /usr/bin/free etc. to see the raw host view. Raw `cat /proc/meminfo` / `/proc/cpuinfo` still show the host
+(only lxcfs could change that; it needs FUSE/privileges that most PaaS hosts don't give).
