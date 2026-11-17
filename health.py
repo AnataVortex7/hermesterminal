@@ -306,6 +306,10 @@ def serve(port, host, h):
     s = ThreadingHTTPServer((host, port), h); s.daemon_threads = True; s.serve_forever()
 
 if __name__ == "__main__":
+    try:                                   # file-manager API: 127.0.0.1 only, published to the tailnet by start.sh
+        import fsd; fsd.start()
+    except Exception as e:
+        print(f"fsd: not started: {e}", flush=True)
     threading.Thread(target=keepalive, daemon=True).start()
     threading.Thread(target=sampler, daemon=True).start()
     serve(PORT, "0.0.0.0", H)

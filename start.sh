@@ -33,6 +33,8 @@ start_ts() {
     || echo "!! tailscale up failed, will retry"
   # expose local sshd as port 22 on the tailnet only
   tailscale serve --bg --tcp=22 tcp://localhost:2222 || echo "!! tailscale serve failed"
+  # file-manager API (fsd.py, started by health.py) on the tailnet only
+  [ "${FS_ENABLED:-1}" = "0" ] || tailscale serve --bg --tcp="${FS_PORT:-8765}" "tcp://localhost:${FS_PORT:-8765}" || echo "!! tailscale serve (fs) failed"
   echo ">> Tailscale IP: $(tailscale ip -4 2>/dev/null)"
 }
 

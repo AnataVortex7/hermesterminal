@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY start.sh health.py oomguard.py cgshim.py /app/
+COPY start.sh health.py oomguard.py cgshim.py fsd.py /app/
 # container-aware free/nproc/uptime/top/df/lscpu: /usr/local/bin is ahead of /usr/bin in PATH
 RUN chmod +x /app/start.sh /app/cgshim.py \
  && for c in free nproc uptime top df lscpu; do ln -sf /app/cgshim.py /usr/local/bin/$c; done

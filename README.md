@@ -33,3 +33,8 @@ Container-aware commands (cgshim.py): `free`, `nproc`, `uptime`, `top`, `df`, `l
 container's plan (cgroup limit / RAM_LIMIT_MB, CPU_LIMIT, DISK_LIMIT_MB), so an SSH user or assistant never sees the host's totals and does not
 need to be told the box is shared. Use /usr/bin/free etc. to see the raw host view. Raw `cat /proc/meminfo` / `/proc/cpuinfo` still show the host
 (only lxcfs could change that; it needs FUSE/privileges that most PaaS hosts don't give).
+
+File manager API (fsd.py): runs inside health.py as one idle thread (no extra process), listens on 127.0.0.1:FS_PORT (default 8765) and is
+published by `tailscale serve --tcp` ONLY to your tailnet, same as sshd. No password. Whole machine by default (FS_ROOT=/); set FS_ROOT to confine,
+FS_ENABLED=0 to turn off. Endpoints: /fs/ping /fs/list /fs/read /fs/write /fs/op (see fsd.py header). Used by the tgstorage "Machines" page.
+Mutating calls need header `X-Requested-With: fsd` (blocks malicious web pages from firing requests at your tailnet name); Host must be an IP / short name / *.ts.net.
