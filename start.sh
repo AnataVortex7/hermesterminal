@@ -40,6 +40,8 @@ start_ts() {
 
 python3 /app/health.py &
 python3 /app/oomguard.py >>/var/log/oomguard.out 2>&1 &
+# optional rclone backup/restore: only runs when BACKUP_REMOTE is set (see backup.py), any failure is skipped
+[ -n "$BACKUP_REMOTE" ] && python3 /app/backup.py >>/var/log/hermes-backup.out 2>&1 &
 start_sshd
 start_ts
 
@@ -50,5 +52,6 @@ while true; do   # watchdog
   start_sshd
   pgrep -f health.py >/dev/null || { python3 /app/health.py & }
   pgrep -f oomguard.py >/dev/null || { python3 /app/oomguard.py >>/var/log/oomguard.out 2>&1 & }
+  [ -n "$BACKUP_REMOTE" ] && { pgrep -f /app/backup.py >/dev/null || python3 /app/backup.py >>/var/log/hermes-backup.out 2>&1 & }
   sleep 20
 done
